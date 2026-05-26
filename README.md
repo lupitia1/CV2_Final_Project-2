@@ -33,23 +33,23 @@ Deliverable: a Kaggle notebook ([rqe_transformer_wlasl.ipynb](rqe_transformer_wl
 
 ## 3. Experimental setup (Step 4)
 
-- **Dataset:** WLASL100 (top-100 most frequent glosses) with MediaPipe Holistic landmarks.
-- **Split:** signer-disjoint — a fixed subset of signer IDs is held out from training and is the only test set. Never seen during training.
-- **Models compared:** RQE-Transformer and a Pooled-MLP baseline (same input, same training budget, no temporal modeling). The baseline isolates how much of the cross-signer gap RQE alone closes.
+- **Dataset:** WLASL100 (top-100 most frequent glosses) with MediaPipe landmarks already extracted, attached from Kaggle dataset [`chinhde/wlasl-300-landmarks`](https://www.kaggle.com/datasets/chinhde/wlasl-300-landmarks) (despite the name, ships the WLASL100 subset).
+- **Split:** the **official WLASL train/val/test split** from Li et al. 2020. Test videos are drawn from different sources than train, so the protocol is the standard "cross-signer-ish" evaluation in the field. The dataset does not ship per-instance `signer_id`, so the failure analysis uses the per-class confusion view.
+- **Models compared:** RQE-Transformer and a Pooled-MLP baseline (same input, same training budget, no temporal modeling). The baseline isolates how much of the gap RQE alone closes.
 - **Metrics:** Top-1 accuracy and macro F1 on the held-out test set (per §6.2).
 - **Fine-tune config (declared per §6.1):** AdamW (lr 3e-4, weight decay 1e-4), cosine schedule, 15 epochs, batch 32, max 64 frames, cross-entropy with label smoothing 0.1, grad-clip 1.0, seed 0.
 
 ## 4. Failure analysis (Step 5)
 
-The notebook produces (i) per-signer accuracy on the held-out test set and (ii) the top-confused class pairs from the confusion matrix.
+The notebook produces (i) per-class accuracy (worst classes on the held-out test set) and (ii) top-confused class pairs from the confusion matrix.
 
-**Case 1 — Worst held-out signer.** Typically a left-handed signer or one with atypical signing speed. **Mechanism:** RQE normalizes translation and torso scale but **not** handedness or temporal speed. Left-handed signing flips which hand carries the lexical content, so the same gloss lives in a different region of `input_proj`'s output and the linear projection cannot un-flip it. Speed differences shift salient frames; the Transformer's learned **absolute** positional embedding misaligns attention patterns calibrated on slow signers when tested on fast ones. Both failures point to specific design properties: the invariance set in RQE is incomplete, and the positional encoding is absolute rather than relative.
+**Case 1 — Worst-performing classes (signing-style sensitivity).** The lowest-accuracy classes are typically glosses with the smallest training support or with movements that lie close to other glosses in the RQE-normalized representation. These are the classes where unseen-signer style (handedness, signing speed) tips the prediction over the decision boundary. **Mechanism:** RQE normalizes translation and torso scale but **not** handedness or temporal speed. Left-handed signing flips which hand carries the lexical content, so the same gloss lands in a different region of `input_proj`'s output and the linear projection cannot un-flip it. Speed differences shift salient frames; the Transformer's learned **absolute** positional embedding misaligns attention patterns calibrated on slow examples when applied to fast ones. Both failures point to specific design properties: the invariance set in RQE is incomplete, and the positional encoding is absolute rather than relative.
 
 **Case 2 — Top confused gloss pair.** Pairs sharing the same gross arm trajectory but differing in hand-shape. **Mechanism:** the per-frame token is the *flattened* RQE-normalized landmark vector. Pose-only landmarks at MediaPipe's resolution have low fidelity on the fingers (small Cartesian deltas between finger configurations after torso-scale normalization), so the input itself underrepresents the discriminative signal. This is a representational limit of pose-only input, not a learning failure — ST-GCN would have the same problem.
 
 ## 5. Thesis direction (Step 7)
 
-**Did the results support the hypothesis?** *Partially.* RQE+attention closes part of the gap relative to a baseline that ignores temporal structure (direction supported). But per-signer and confusion analyses show residual errors concentrate on (a) signers with handedness/speed outside the training distribution and (b) gloss pairs distinguished by fine hand-shape — neither addressed by RQE.
+**Did the results support the hypothesis?** *Partially.* RQE+attention closes part of the gap relative to a baseline that ignores temporal structure (direction supported). But the per-class and confusion analyses show residual errors concentrate on (a) classes whose examples sit close to other glosses in the RQE-normalized representation (handedness/speed sensitivity) and (b) gloss pairs distinguished by fine hand-shape — neither addressed by RQE.
 
 **Concrete next step — "RQE+".** Two preprocessing additions motivated directly by the two failure cases:
 1. **Handedness canonicalization** — mirror all landmarks to a single dominant hand whenever the inferred dominant hand is left.
@@ -57,13 +57,21 @@ The notebook produces (i) per-signer accuracy on the held-out test set and (ii) 
 
 Plus an architectural addition: a **finger-resolution branch** feeding the 21-point MediaPipe Hand landmarks of the dominant hand as a second token stream into the Transformer, so finger geometry is not averaged out with the rest of the body.
 
-**Feasibility.** All three are preprocessing-only or token-concat changes (no new training data, no new model family), and can be ablated on the same signer-disjoint split. Expected effect tied to the failure cases: case 1 should close substantially; case 2 should improve in proportion to how much the hand-only stream resolves finger-shape ambiguity.
+**Feasibility.** All three are preprocessing-only or token-concat changes (no new training data, no new model family), and can be ablated on the same WLASL100 official split. Expected effect tied to the failure cases: case 1 should close substantially; case 2 should improve in proportion to how much the hand-only stream resolves finger-shape ambiguity.
+
+For a stronger cross-signer evaluation, a follow-up would fetch the official `WLASL_v0.3.json` (Li et al. 2020) to recover per-instance `signer_id` and run a strict signer-disjoint split — straightforward to add.
 
 ---
 
 ## Files
 
 - [rqe_transformer_wlasl.ipynb](rqe_transformer_wlasl.ipynb) — end-to-end Kaggle notebook (data loading, RQE, model, training, evaluation, failure analysis).
+
+## Running on Kaggle
+
+1. Create a new Kaggle notebook (T4 GPU).
+2. Attach the dataset [`chinhde/wlasl-300-landmarks`](https://www.kaggle.com/datasets/chinhde/wlasl-300-landmarks). The default path in the notebook is `/kaggle/input/wlasl-300-landmarks` — adjust `DATA_ROOT` in the config cell if Kaggle assigns a different folder name.
+3. Run cells top-to-bottom. The notebook prints the file listing and how many records loaded per split so any path/schema mismatch is visible immediately.
 
 ## LLM disclosure (§10)
 
