@@ -32,9 +32,10 @@
 %   §6 Failure analysis
 %     - per_signer.png      : bar chart of test-set Top-1 per held-out signer,
 %                             sorted ascending, with dashed line at macro mean.
-%     - failure_example.png : 4 keyframes from a worst-signer misclassified
-%                             clip with MediaPipe skeleton overlay; caption
-%                             gives predicted vs true gloss.
+%     - pred_examples.png   : paired success (top) vs failure (bottom)
+%                             keyframes from the worst held-out signer with
+%                             MediaPipe skeleton overlay; caption gives
+%                             predicted vs true gloss.
 % =====================================================================
 
 \title{\vspace{-1.2cm}\textbf{Cross-Signer Generalization on WLASL100}\\
@@ -42,7 +43,7 @@
 \author{Patricia Guadalupe Alvarenga Mairena\\
 Computer Vision II -- Master in Artificial Intelligence\\
 Universidade de Vigo (ESEI)}
-\date{\today}
+\date{June 2026}
 
 \begin{document}
 \maketitle
@@ -54,31 +55,31 @@ Most word-level sign language recognition papers train and test on overlapping s
 %---------------------------------------------------------------
 \section{Problem statement}
 
-\textbf{Open challenge from the survey.} The reference survey for Domain~C (Zhou \emph{et al.}, 2023~\cite{zhou2023}) lists \emph{cross-subject / cross-signer generalization} as one of the unsolved problems in pose-based action recognition: models trained on one set of subjects tend to overfit to body proportions, signing style and camera placement, and drop noticeably on people they were not trained on. The SLR survey by De Coster \emph{et al.}~\cite{decoster2023survey} flags the same gap. On WLASL~\cite{li2020}, which has few examples per gloss and a non-uniform distribution of signers per class, this is the dominant generalization gap.
+\textbf{Open challenge from the survey.} The reference survey for Domain~C (Zhou \emph{et al.}, 2023~\cite{zhou2023}) lists \emph{cross-subject generalisation} as one of the unsolved problems in pose-based action recognition: models trained on one set of subjects tend to overfit to body proportions, signing style and camera placement, and drop on people they were not trained on. In the sign-language specific setting, the SLR survey of De Coster \emph{et al.}~\cite{decoster2023survey} makes the same point under the label \emph{cross-signer generalisation}. On WLASL~\cite{li2020}, which has few examples per gloss and a non-uniform distribution of signers per class, this is the dominant generalisation gap.
 
 \textbf{Why it matters.} A sign language recognizer that only works for the signers it was trained on is not useful in practice (accessibility, HCI). The signer-disjoint gap is basically what tells you whether the model learned the sign or learned the person.
 
 \textbf{Research question.} On a strict signer-disjoint split of WLASL100, does a small Transformer over RQE-normalised MediaPipe Holistic landmarks beat a pooled-MLP baseline that consumes the same RQE features?
 
-\textbf{Initial hypothesis.} Partially yes. RQE subtracts the shoulder midpoint and divides by the inter-shoulder distance, so absolute position and absolute body size are gone before the network sees the input. Self-attention should then weight the discriminative hand-shape transitions over the relatively stable body pose. I expect the Transformer to beat the pooled-MLP in macro F1 by at least $\sim$5\,pp. I do \emph{not} expect the gap to close: RQE does not normalise handedness, signing speed or finger anatomy.
+\textbf{Initial hypothesis.} Partially yes. RQE subtracts the shoulder midpoint and divides by the inter-shoulder distance, so absolute position and absolute body size are gone before the network sees the input. Self-attention should then weight the discriminative hand-shape transitions over the relatively stable body pose. I expect the Transformer to beat the pooled-MLP in macro F1 by a few percentage points. I do \emph{not} expect the gap to close: RQE does not normalise handedness, signing speed or finger anatomy.
 
 %---------------------------------------------------------------
 \section{Related work}
 
 WLASL was introduced by Li \emph{et al.}~\cite{li2020} together with the 100/300/1000/2000 subsets and per-instance \texttt{signer\_id} field in \texttt{WLASL\_v0.3.json}, which I use to build the signer-disjoint split. Their strongest baselines were RGB-based (I3D~\cite{carreira2017i3d}) and quietly inherit signer identity through face / clothing / background; the gap to unseen signers is documented but not closed.
 
-Pose-based methods take the opposite route. ST-GCN~\cite{yan2018} hard-codes a skeletal adjacency, awkward when fingers carry most of the discriminative signal. SPTN / SPOTER~\cite{bohacek2022sptn} drops the graph and runs a per-frame Transformer over MediaPipe landmarks, with reported gains over ST-GCN on WLASL100; this is the closest published architecture to mine. OpenHands~\cite{selvaraj2022openhands} releases pose-based baselines and flags signer-disjoint evaluation as an open problem. The gap that motivates this work: published pose-based numbers are almost always on signer-overlapping splits, so the headline accuracy hides how much is identity rather than sign. I close that loophole by re-splitting WLASL100 strictly by signer. Standard ingredients: Transformer encoder~\cite{vaswani2017attention}, AdamW~\cite{loshchilov2019adamw}, MediaPipe Holistic~\cite{lugaresi2019mediapipe}.
+Pose-based methods take the opposite route. ST-GCN~\cite{yan2018} hard-codes a skeletal adjacency, awkward when fingers carry most of the discriminative signal. The Sign Pose-based Transformer of Bohacek and Hr\'uz~\cite{bohacek2022sptn} drops the graph and runs a per-frame Transformer over MediaPipe landmarks, reaching $\sim$63\% Top-1 on the standard (signer-overlapping) WLASL100 split; this is the closest published architecture to mine. OpenHands~\cite{selvaraj2022openhands} releases pose-based pretrained baselines and discusses generalisation across signers as a remaining issue, though it does not benchmark a strict signer-disjoint protocol. The gap that motivates this work: published pose-based numbers are almost always on signer-overlapping splits, so the headline accuracy hides how much is identity rather than sign. I close that loophole by re-splitting WLASL100 strictly by signer. Standard ingredients: Transformer encoder~\cite{vaswani2017attention}, AdamW~\cite{loshchilov2019adamw}, MediaPipe Holistic~\cite{lugaresi2019mediapipe}.
 
 %---------------------------------------------------------------
 \section{Architecture selection}
 \label{sec:arch}
 
 \textbf{Chosen: RQE-Transformer.}
-Per frame I take 75 MediaPipe Holistic joints (33 body + 21+21 hand) in 3D, apply RQE (centre on shoulder midpoint, divide by inter-shoulder distance, clip to $\pm 20$, fallback scale 1.0 if torso is degenerate), and flatten to a 225-d vector. Then linear projection to $d_\text{model}=256$, learned positional embedding (max length 64), 4-layer / 8-head pre-norm Transformer (FFN 512, dropout 0.1, GELU), masked temporal mean pool, linear head $\to$ 100 logits.
+Per frame I take 75 MediaPipe Holistic joints (33 body + 21+21 hand) in 3D, apply RQE (centre on shoulder midpoint, divide by inter-shoulder distance, clip to $\pm 20$, fallback scale 1.0 if torso is degenerate), and flatten to a 225-d vector. Then linear projection to $d_\text{model}=128$, learned positional embedding (max length 64), 2-layer / 4-head pre-norm Transformer (FFN 256, dropout 0.2, GELU), masked temporal mean pool, linear head $\to$ 100 logits. About 430k parameters total --- deliberately small to match the few-shot training-set size.
 
-\textbf{Why this should help cross-signer generalization.} RQE at the input kills the two cleanest identity signals (position, body size) before the network sees them — a representational prior, not something the model has to learn from a small training set. Self-attention then weights hand-shape transitions regardless of when they occur, which matters because signers go at different speeds. No fixed skeletal graph (unlike ST-GCN) means no signer-specific corrections baked into GCN weights.
+\textbf{Why this should help cross-signer generalization.} RQE at the input kills the two cleanest identity signals (position, body size) before the network sees them --- a representational prior, not something the model has to learn from a small training set. Self-attention then weights hand-shape transitions \emph{by content}, which is more tolerant of speed variation than a fixed-window convolution would be; the learned \emph{absolute} positional embedding does still tie attention to absolute frame indices, which is the limitation that resurfaces in \S\ref{sec:fail}. No fixed skeletal graph (unlike ST-GCN) means no signer-specific corrections baked into GCN weights.
 
-\textbf{Baseline (Pooled-MLP).} Same RQE input, masked mean over time, then a 2-layer MLP. Isolates how much the temporal model adds on top of RQE.
+\textbf{Baseline (Pooled-MLP).} Same RQE input, masked temporal mean, then a 2-layer MLP. This is intentionally a weak baseline: it has no temporal modelling at all. The comparison therefore measures whether \emph{any} temporal model adds value on top of RQE, not whether attention specifically beats a different temporal backbone. A stronger baseline (e.g.\ temporal CNN or LSTM) would isolate attention more sharply but was out of scope for the matched-compute budget of this project.
 
 \textbf{Rejected alternatives.} ST-GCN~\cite{yan2018}: fixed graph hurts on finger-dominated signal. Raw RGB (I3D~\cite{carreira2017i3d}, Video-Swin): carries the strongest identity cues; not the comparison I want.
 
@@ -86,13 +87,17 @@ Per frame I take 75 MediaPipe Holistic joints (33 body + 21+21 hand) in 3D, appl
 \section{Experimental setup}
 \label{sec:setup}
 
-\textbf{Dataset.} WLASL100 (top-100 glosses). The chinhde Kaggle landmarks dump turned out to be incompatible with the official WLASL metadata (no \texttt{video\_id}, mismatched per-class counts), so I extracted landmarks directly from the raw videos in \texttt{risangbaskoro/wlasl-processed} using MediaPipe Holistic~\cite{lugaresi2019mediapipe}. Of the 2{,}038 WLASL100 video IDs, \todo{N\_present}/2038 were actually on disk; the rest have dead source URLs (see Limitations).
+\textbf{Dataset.} WLASL100 (top-100 glosses). The chinhde Kaggle landmarks dump turned out to be incompatible with the official WLASL metadata (no \texttt{video\_id}, mismatched per-class counts), so I extracted landmarks directly from the raw videos in \texttt{risangbaskoro/wlasl-processed} using MediaPipe Holistic~\cite{lugaresi2019mediapipe}. Of the 2{,}038 WLASL100 video IDs in \texttt{nslt\_100.json}, only \todo{N\_present}/2038 ($\approx$50\%) were actually reachable on disk --- the rest have dead source URLs, a known WLASL issue. \textbf{Effective WLASL100 in this project is therefore about half the published benchmark}, and absolute numbers are not comparable to public leaderboards (the internal comparison between rows of Table~\ref{tab:results} is still fair because both share the same input and recipe).
+
+\textbf{Note on RQE and the \boldmath$z$-axis.} MediaPipe Holistic returns $z$-coordinates in landmark-group-specific reference frames (pose $z$ relative to the hip, hand $z$ relative to the wrist), so they are not directly comparable across joints. RQE's inter-shoulder scaling is a planar (mostly $x$) distance, so applying it to $z$ does not produce a clean invariance. We keep $z$ in the input and let the linear projection learn to downweight it; an alternative (dropping $z$ entirely) is left for the next iteration.
 
 \textbf{Signer-disjoint protocol.} The official WLASL split is \emph{not} signer-disjoint: the same person can appear in train and test. I rebuild a split from \texttt{WLASL\_v0.3.json}'s \texttt{signer\_id} field, assigning whole signers (not videos) to splits: about 70\% train / 10\% val / 20\% test, with a greedy balancing pass so every class still has $\geq 1$ training clip. Final sizes: \todo{$N_\text{train}/N_\text{val}/N_\text{test}$ clips, $S_\text{train}/S_\text{val}/S_\text{test}$ signers}. The intersection of signer sets across splits is asserted empty.
 
 \textbf{Metrics.} Top-1 accuracy and macro F1 on the signer-disjoint test set (held-out signers, never seen at training time). Per-signer accuracy is also reported as a diagnostic for the failure analysis.
 
-\textbf{Training configuration.} AdamW lr $3\!\times\!10^{-4}$, weight decay $1\!\times\!10^{-4}$, cosine schedule, batch size 32, max 64 frames per clip, 15 epochs, cross-entropy with label smoothing 0.1, grad-clip 1.0. Trained from scratch (no pretraining). Each model is trained with 3 random seeds (0, 1, 2); I report mean $\pm$ std on the held-out test set.
+\textbf{Training configuration.} AdamW lr $3\!\times\!10^{-4}$, weight decay $1\!\times\!10^{-4}$, cosine schedule, batch size 32, max 64 frames per clip, 30 epochs, cross-entropy with label smoothing 0.1, grad-clip 1.0. Trained from scratch (no pretraining). No validation-based early stopping or best-checkpoint selection: we report the end-of-training model and rely on the cosine schedule for a smooth landing. Each model is trained with 3 random seeds (0, 1, 2); I report mean $\pm$ std on the held-out test set.
+
+\textbf{Train-time augmentation.} Three light augmentations on the train split only (val/test see clean inputs): horizontal flip with probability 0.5 (mirrors $x$ after RQE, so the model sees both handednesses), additive Gaussian noise on landmarks with $\sigma{=}0.01$ torso units, and random temporal start when the clip is longer than 64 frames (otherwise centred crop). Picked after a no-augmentation run collapsed to near-chance on the held-out signers.
 
 \begin{figure}[t]
 \centering
@@ -127,13 +132,13 @@ RQE-Transformer (this work)                 & \todo{xx.x $\pm$ x.x} & \todo{xx.x
 \end{subfigure}\hfill
 \begin{subfigure}{0.48\linewidth}
   \includegraphics[width=\linewidth]{training_curve.png}
-  \caption{Train loss / val Top-1 over 15 epochs (seed 0).}
+  \caption{Train loss / val Top-1 over 30 epochs (seed 0).}
   \label{fig:loss}
 \end{subfigure}
 \caption{RQE-Transformer on the signer-disjoint test set.}
 \end{figure}
 
-\textbf{Comparison with published numbers.} Pose-based methods with pretraining reach 60--80\% Top-1 on the \emph{standard} WLASL100 split~\cite{selvaraj2022openhands,bohacek2022sptn}. My setup is intentionally weaker (no pretraining, no augmentation, no hand-crops, half the videos missing, signer-disjoint split is harder), so I expect to be well below that. The point is the internal comparison between the two rows in Table~\ref{tab:results}, not the absolute number.
+\textbf{Comparison with published numbers.} Pose-based methods with pretraining reach 60--80\% Top-1 on the \emph{standard} WLASL100 split~\cite{selvaraj2022openhands,bohacek2022sptn}. My setup is intentionally weaker (no pretraining, only light landmark-level augmentation, no hand-crops, half the videos missing, signer-disjoint split is harder), so I expect to be well below that. The point is the internal comparison between the two rows in Table~\ref{tab:results}, not the absolute number.
 
 %---------------------------------------------------------------
 \section{Failure analysis}
@@ -150,12 +155,12 @@ Worst signer: \todo{signer\_id} with \todo{xx\%} Top-1 vs.\ macro mean \todo{yy\
 \end{figure}
 
 \textbf{Case 2 — Top confused gloss pair.}
-The biggest off-diagonal cell is \todo{gloss A vs gloss B} (\todo{xx\%} of A misclassified as B). The two glosses share the same gross arm trajectory and differ in hand-shape. MediaPipe hand landmarks are in the input, but fingers contribute $\sim$$\tfrac{42 \times 3}{225}\!\approx\!56\%$ of the per-frame vector \emph{by count} and yet much less than that in \emph{magnitude} after the linear projection (most variance is in the body channels). After the temporal mean pool, the discriminative finger signal gets averaged out. This is a representational limitation of pose-only input at MediaPipe's resolution, not a learning failure — ST-GCN would have the same problem.
+The biggest off-diagonal cell of the confusion matrix (Figure~\ref{fig:cm}) is \todo{gloss A vs gloss B} (\todo{xx\%} of A misclassified as B). The two glosses share the same gross arm trajectory and differ in hand-shape. MediaPipe hand landmarks are in the input --- fingers contribute $\sim$$\tfrac{42 \times 3}{225}\!\approx\!56\%$ of the per-frame vector \emph{by count} --- but I \emph{hypothesise} they contribute much less in \emph{magnitude} after the linear projection, because most across-frame variance lives in the body channels and the projection is unconstrained. After the masked temporal mean pool, the already-weaker finger signal gets averaged across time. This is consistent with a representational limit of pose-only input at MediaPipe's resolution rather than a learning failure --- ST-GCN would have the same input-bandwidth problem. A direct test (plotting per-joint $\|\mathbf{W}_\text{proj}\|$ contributions) is left to the next iteration.
 
 \begin{figure}[t]
 \centering
-\includegraphics[width=0.85\linewidth]{failure_example.png}
-\caption{Four keyframes of a misclassified test clip with skeleton overlay. Predicted \todo{X}, true \todo{Y}.}
+\includegraphics[width=0.95\linewidth]{pred_examples.png}
+\caption{Paired success (top) vs failure (bottom) clips from the same worst held-out signer, 4 keyframes each, MediaPipe skeleton overlaid. Top: correctly classified \todo{gloss}. Bottom: predicted \todo{X}, true \todo{Y}. The contrast localises the failure mode --- the model is not broken on this signer overall; specific signs survive while others don't.}
 \label{fig:fail}
 \end{figure}
 
@@ -169,7 +174,7 @@ The biggest off-diagonal cell is \todo{gloss A vs gloss B} (\todo{xx\%} of A mis
 
 \textbf{Concrete next step (proposed method).} Add a \emph{finger-resolution branch} to the architecture. Concretely: keep the body stream unchanged (75-joint RQE tokens through the current Transformer), and introduce a second token stream with only the 21 landmarks of the dominant hand (auto-detected from per-frame hand-motion energy and mirrored to a canonical side, which also addresses Case 1's handedness leak). The hand stream has its own learned positional embedding and its own short Transformer, and is fused into the body stream via cross-attention before the temporal mean pool.
 
-\textbf{Feasibility.} All ingredients are preprocessing-only or additive on top of the current code: the hand landmarks are already in the cached \texttt{wlasl100\_landmarks.npz}; dominant-hand detection is a single pass over hand-motion energy; the extra Transformer adds $<$200k parameters relative to the current $\sim$3.2\,M, well within the same T4 training budget; evaluation is on the same signer-disjoint split, so the comparison is direct and the effect on Case 2 (and Case 1, via the canonicalisation) is directly measurable.
+\textbf{Feasibility.} All ingredients are preprocessing-only or additive on top of the current code: the hand landmarks are already in the cached \texttt{wlasl100\_landmarks.npz}; dominant-hand detection is a single pass over hand-motion energy; the extra Transformer adds $<$200k parameters relative to the current $\sim$430k, still well within the same T4 training budget; evaluation is on the same signer-disjoint split, so the comparison is direct and the effect on Case 2 (and Case 1, via the canonicalisation) is directly measurable.
 
 \textbf{Limitations.} About half of the WLASL100 video URLs are no longer reachable, so the test set is a subset of the benchmark and absolute numbers cannot be compared to public leaderboards (the internal comparison between the two rows of Table~\ref{tab:results} is still fair because both share the same input and recipe). Input is pose-only, so MediaPipe failures (zero hand landmarks on some frames) propagate into the model. Variance is estimated from only 3 seeds.
 
@@ -179,7 +184,7 @@ The biggest off-diagonal cell is \todo{gloss A vs gloss B} (\todo{xx\%} of A mis
 This project used an LLM coding assistant (GitHub Copilot Chat, Claude models). \emph{Drafted by the LLM, reviewed by me:} most boilerplate Python (PyTorch dataset, training loop, plotting helpers, MediaPipe extraction), notebook markdown, and the structural skeleton of this report. \emph{Drafted by me, polished by the LLM:} the research question, the choice of a strict signer-disjoint split, the mechanistic justifications (\S\ref{sec:arch}), the failure-analysis interpretations (\S\ref{sec:fail}), and the next-step proposal. \emph{Verified by me:} every number traced to a Kaggle cell output; citations checked manually; the signer-disjoint assertion is in the notebook. \emph{Not used:} I did not let the assistant invent citations or numerical results. One concrete catch: an earlier notebook used \texttt{chinhde/wlasl-300-landmarks} assuming it followed the official WLASL splits — it doesn't (no \texttt{video\_id}, mismatched per-class counts). A fingerprint-matching diagnostic confirmed the incompatibility and I rebuilt the pipeline on raw videos.
 
 %---------------------------------------------------------------
-\bibliographystyle{IEEEtran}
+\bibliographystyle{plain}
 \begin{thebibliography}{10}
 \bibitem{li2020}
 D.~Li, C.~Rodriguez-Opazo, X.~Yu, and H.~Li, ``Word-level deep sign language recognition from video: A new large-scale dataset and methods comparison,'' in \emph{WACV}, 2020.
